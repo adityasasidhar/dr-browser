@@ -75,6 +75,15 @@ def is_present(value: Any) -> bool:
     return True
 
 
+def normalized(value: Any) -> str:
+    """Whitespace-insensitive comparison form of a value.
+
+    The one definition of "same text" used by diffing, distinctness checks, and
+    the dashboard's rival measurement, so all three agree on what a change is.
+    """
+    return "" if value is None else " ".join(str(value).split())
+
+
 class Violation(BaseModel):
     """A single way a snapshot failed its contract.
 

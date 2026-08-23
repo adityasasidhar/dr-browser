@@ -18,7 +18,6 @@ and only trusts a repair after fresh output passes its original contract.
 
 [![Watch the 58-second Dr Browser product demo](demo/dr-browser-demo.gif)](demo/dr-browser-demo.mp4)
 
-*Click the demo above to open the full-resolution video with sound.*
 
 </div>
 
