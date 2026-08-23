@@ -1,0 +1,147 @@
+# Dr Browser targets.
+#
+# Each target carries a contract: the shape its rows must have. The contract is
+# what lets the pipeline notice that a site changed, and it is what gets turned
+# into a heal prompt when it does. Tighten `min_fill_rate` and `pattern` once
+# you have seen a few real collections.
+#
+# Fill `collector_id` by running `dr-browser provision`.
+
+[[targets]]
+name = "langchain"
+url = "https://changelog.langchain.com/"
+description = """For each changelog entry on the page, extract the entry title, \
+the publication date, the short summary text, and the permalink URL to that entry."""
+collector_id = "c_msyjolqk19z8yfpnrl"
+# The collector returns one wrapper per page it visited, each holding the full
+# entry list under this key.
+records_path = "changelog_entries"
+key_fields = ["entry_title"]
+min_rows = 20
+
+  [[targets.fields]]
+  name = "entry_title"
+  required = true
+  min_fill_rate = 0.95
+  description = "the headline of a changelog entry"
+
+  [[targets.fields]]
+  name = "publication_date"
+  required = true
+  min_fill_rate = 0.9
+  pattern = "\\d{4}"
+  description = "the publication date, containing a four-digit year"
+
+  [[targets.fields]]
+  name = "summary_text"
+  required = true
+  min_fill_rate = 0.8
+  description = "the body text of the entry"
+
+  [[targets.fields]]
+  name = "permalink_url"
+  required = false
+  min_fill_rate = 0.8
+  pattern = "^https?://"
+  description = "an absolute permalink to the entry"
+
+[[targets]]
+name = "anthropic-api"
+url = "https://docs.claude.com/en/release-notes/api"
+description = """For each release-note entry, extract the release date, the entry \
+title or headline, and the description of what changed."""
+collector_id = "c_msyjv15k2227gketj4"
+key_fields = ["title"]
+min_rows = 40
+
+  [[targets.fields]]
+  name = "title"
+  required = true
+  min_fill_rate = 0.95
+  # This collector currently returns the body text as the title on ~67% of
+  # rows. Both fields are populated, so only a distinctness check catches it.
+  distinct_from = ["description"]
+  description = "the headline of a release note, distinct from its body"
+
+  [[targets.fields]]
+  name = "release_date"
+  required = true
+  min_fill_rate = 0.95
+  pattern = "\\d{4}"
+  description = "the release date, containing a four-digit year"
+
+  [[targets.fields]]
+  name = "description"
+  required = true
+  min_fill_rate = 0.9
+  description = "what changed in this release"
+
+[[targets]]
+name = "runpod-docs"
+url = "https://docs.runpod.io/changelog"
+description = """For each changelog entry, extract the entry title, the date it \
+was published, and the body text describing the change."""
+collector_id = "c_msyjymc32eaagvcljn"
+# This collector currently discovers pages but extracts nothing from them:
+# `changelog_entries` comes back null on every row. Left as-is deliberately so
+# the pipeline detects it and heals it for real.
+records_path = "changelog_entries"
+key_fields = ["entry_title"]
+min_rows = 5
+
+  [[targets.fields]]
+  name = "entry_title"
+  required = true
+  min_fill_rate = 0.9
+  description = "the headline of a changelog entry"
+
+  [[targets.fields]]
+  name = "publication_date"
+  required = true
+  min_fill_rate = 0.8
+  pattern = "\\d{4}"
+  description = "the publication date, containing a four-digit year"
+
+  [[targets.fields]]
+  name = "summary_text"
+  required = false
+  min_fill_rate = 0.7
+  description = "the body text describing the change"
+
+[[targets]]
+name = "ollama"
+url = "https://ollama.com/blog"
+description = """For each blog post listed, extract the post title, the \
+publication date, the summary or excerpt, and the link to the full post."""
+collector_id = "c_msyk228w2dwlrr0q17"
+key_fields = ["post_title"]
+min_rows = 20
+
+  [[targets.fields]]
+  name = "post_title"
+  required = true
+  min_fill_rate = 0.95
+  description = "the title of a blog post"
+
+  [[targets.fields]]
+  name = "publication_date"
+  required = true
+  min_fill_rate = 0.95
+  pattern = "\\d{4}"
+  description = "the publication date, containing a four-digit year"
+
+  [[targets.fields]]
+  name = "post_url"
+  required = true
+  min_fill_rate = 0.95
+  pattern = "^https?://"
+  description = "an absolute link to the post"
+
+  # Only about a third of listed posts carry an excerpt; this threshold is set
+  # from observed output, not aspiration, so it flags a real drop rather than
+  # the page's normal sparsity.
+  [[targets.fields]]
+  name = "summary"
+  required = false
+  min_fill_rate = 0.25
+  description = "the post excerpt, present on only some posts"

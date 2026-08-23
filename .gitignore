@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Generated dashboard — rebuilt by CI on every collection.
+site/
+
+# Local scratch stores. The real collection history (data/scrapverse.db) is
+# committed on purpose: it is the pipeline's state between CI runs.
+data/demo.db
+data/*.db-journal
+
+# SQLite sidecars — these can appear next to any db, including committed ones.
+*.db-wal
+*.db-shm
+
+.env
+.env.*
+
+.DS_Store

@@ -1,0 +1,85 @@
+name: collect
+
+# The whole point of the project: this runs with nobody watching. If a target
+# site changes overnight, the job detects it, heals the collector through
+# Bright Data, verifies the fix against the same contract, and publishes the
+# result — without a human and without a code change.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Collect a single target (blank = all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    env:
+      # Non-interactive auth: `bdata login` opens a browser, which CI cannot do.
+      BRIGHTDATA_API_KEY: ${{ secrets.BRIGHTDATA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Required by the Pages deployment action to establish the deployment
+      # context and expose the final URL in the workflow summary.
+      - uses: actions/configure-pages@v5
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Collect, heal if broken, and diff
+        # --auto-approve closes the heal loop with no human in it. The command
+        # exits non-zero if a target is still broken after a heal attempt, so a
+        # genuinely unrecoverable break still turns the run red.
+        run: |
+          uv run dr-browser pull ${{ github.event.inputs.target }} --auto-approve
+
+      - name: Build dashboard
+        if: always()
+        run: uv run dr-browser report -o site/index.html
+
+      - name: Persist collection history
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/scrapverse.db
+          git diff --staged --quiet || git commit -m "chore: collection $(date -u +%Y-%m-%d)"
+          git push
+
+      - uses: actions/upload-pages-artifact@v3
+        if: always()
+        with:
+          path: site
+
+  publish:
+    needs: collect
+    if: always()
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

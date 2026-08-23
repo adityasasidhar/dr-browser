@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="en">
+{% set STATUS_LABEL = {
+  'proposed': 'Proposed',
+  'awaiting_approval': 'Awaiting approval',
+  'approved': 'Approved',
+  'rejected': 'Rejected',
+  'verified': 'Verified',
+  'failed': 'Still broken',
+} %}
+{% set STATE_LABEL = {
+  'healthy': 'Holding',
+  'degraded': 'Drifting',
+  'broken': 'Broken',
+  'waiting': 'Not yet collected',
+} %}
+{% set broken = views|selectattr('state', 'equalto', 'broken')|list %}
+{% set degraded = views|selectattr('state', 'equalto', 'degraded')|list %}
+{% set system = 'broken' if broken else ('degraded' if degraded else 'healthy') %}
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dr Browser — self-healing changelog intelligence</title>
+<meta name="description" content="Contract-checked changelog collection for AI infrastructure: every field declares how it must look, and a scraper that drifts is repaired and re-verified in place.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#E6EAEB" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0A0F11" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,300&display=swap">
+<style>
+  /* ------------------------------------------------------------------
+     Three typefaces, three voices:
+       Newsreader  — sentences the pipeline wrote about itself
+       JetBrains   — numbers the pipeline measured
+       Archivo     — labels a person wrote
+     ------------------------------------------------------------------ */
+  :root {
+    --paper:    #e6eaeb;
+    --paper-2:  #d6dedf;
+    --panel:    #f7f9f9;
+    --rule:     #c1cbcd;
+    --rule-2:   #d7dedf;
+    --ink:      #0f1618;
+    --ink-2:    #46575b;
+    --ink-3:    #77878b;
+    --heal:     #1f35e0;
+    --heal-2:   rgba(31, 53, 224, 0.10);
+    --hold:     #0d6b53;
+    --drift:    #9c5a05;
+    --break:    #ab2231;
+    --shadow:   0 1px 2px rgba(15, 22, 24, 0.05), 0 8px 24px -18px rgba(15, 22, 24, 0.45);
+
+    --serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+    --sans:  "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono:  "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+
+    --gutter: clamp(20px, 5vw, 56px);
+    --measure: 1180px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:   #0a0f11;
+      --paper-2: #182126;
+      --panel:   #121a1d;
+      --rule:    #253135;
+      --rule-2:  #1b2427;
+      --ink:     #e7eeef;
+      --ink-2:   #9bacb0;
+      --ink-3:   #6c7e82;
+      --heal:    #8f9dff;
+      --heal-2:  rgba(143, 157, 255, 0.14);
+      --hold:    #3ecc9c;
+      --drift:   #eba53c;
+      --break:   #ff6d79;
+      --shadow:  0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -22px rgba(0, 0, 0, 0.9);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:   #0a0f11;
+    --paper-2: #182126;
+    --panel:   #121a1d;
+    --rule:    #253135;
+    --rule-2:  #1b2427;
+    --ink:     #e7eeef;
+    --ink-2:   #9bacb0;
+    --ink-3:   #6c7e82;
+    --heal:    #8f9dff;
+    --heal-2:  rgba(143, 157, 255, 0.14);
+    --hold:    #3ecc9c;
+    --drift:   #eba53c;
+    --break:   #ff6d79;
+    --shadow:  0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -22px rgba(0, 0, 0, 0.9);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a { color: inherit; }
+  /* JetBrains Mono ligates `//` and `?:`, which turns a regex into a puzzle. */
+  code, pre, .term .pat, .gauge-field, .target-foot { font-variant-ligatures: none; }
+  :focus-visible {
+    outline: 2px solid var(--heal);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+  .shell { max-width: var(--measure); margin: 0 auto; padding: 0 var(--gutter); }
+  .skip {
+    position: absolute; left: -9999px; top: 0; z-index: 20;
+    background: var(--ink); color: var(--paper);
+    padding: 10px 16px; font-size: 0.8rem; font-weight: 600;
+  }
+  .skip:focus { left: 0; }
+
+  /* eyebrow: the smallest label in the system, used to name a region */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+  .masthead {
+    border-bottom: 1px solid var(--rule);
+    background: color-mix(in srgb, var(--paper) 82%, transparent);
+    backdrop-filter: blur(10px);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .masthead .shell {
+    display: flex; align-items: center; gap: 18px;
+    min-height: 62px; flex-wrap: wrap;
+  }
+  .wordmark {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 1.12rem; font-weight: 700; letter-spacing: -0.035em;
+    margin: 0;
+  }
+  .beacon {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--hold); flex: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--hold) 20%, transparent);
+  }
+  [data-system="degraded"] .beacon { background: var(--drift); box-shadow: 0 0 0 3px color-mix(in srgb, var(--drift) 20%, transparent); }
+  [data-system="broken"] .beacon { background: var(--break); box-shadow: 0 0 0 3px color-mix(in srgb, var(--break) 22%, transparent); }
+  .masthead-status {
+    font-family: var(--mono); font-size: 0.72rem; color: var(--ink-2);
+    padding-left: 18px; border-left: 1px solid var(--rule);
+  }
+  .masthead-side { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .stamp { font-family: var(--mono); font-size: 0.68rem; color: var(--ink-3); margin: 0; }
+  .theme-toggle {
+    font: inherit; font-size: 0.72rem; font-weight: 500;
+    background: transparent; color: var(--ink-2);
+    border: 1px solid var(--rule); border-radius: 999px;
+    padding: 5px 13px; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .theme-toggle:hover { color: var(--ink); border-color: var(--ink-3); }
+
+  /* ------------------------------------------------------------- hero */
+  /* `padding-block`, never the shorthand: these elements are also `.shell`,
+     whose horizontal padding is the page gutter and must survive. */
+  .hero { padding-block: clamp(44px, 7.5vw, 88px) clamp(38px, 6vw, 60px); }
+  .hero .eyebrow { margin-bottom: 24px; }
+  /* The one place the machine speaks: set as a statement, not as log output. */
+  .statement {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(1.6rem, 3.6vw, 2.65rem);
+    line-height: 1.2;
+    letter-spacing: -0.015em;
+    margin: 0;
+    max-width: 19em;
+    text-wrap: pretty;
+  }
+  .statement-detail {
+    font-family: var(--serif);
+    font-size: clamp(1rem, 1.5vw, 1.16rem);
+    line-height: 1.55;
+    color: var(--ink-2);
+    margin: 18px 0 0;
+    max-width: 56ch;
+  }
+  /* Inline chips carry their own padding, which otherwise leaves the
+     punctuation after them adrift at display size. */
+  .statement code { margin-right: -0.14em; }
+  .statement-detail code { margin-right: -0.08em; }
+  .statement code, .statement-detail code {
+    font-family: var(--mono);
+    font-size: 0.7em;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--heal);
+    background: var(--heal-2);
+    padding: 0.12em 0.3em;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  .proof {
+    margin-top: clamp(34px, 5vw, 54px);
+    display: flex; flex-wrap: wrap; gap: 34px 56px; align-items: flex-end;
+  }
+  /* Two honest stops: when the break was seen, when the repair was proven. */
+  .stages { list-style: none; display: flex; align-items: stretch; gap: 0; margin: 0; padding: 0; }
+  .stage { display: flex; flex-direction: column; gap: 5px; }
+  .stage-name {
+    font-family: var(--mono); font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .stage.is-open .stage-name { color: var(--drift); }
+  .stage.is-fail .stage-name { color: var(--break); }
+  .stage.is-done .stage-name { color: var(--hold); }
+  .stage-time { font-family: var(--mono); font-size: 0.74rem; color: var(--ink-3); }
+  /* The span between the two stops, labelled with how long it took. */
+  .stage-link {
+    list-style: none; position: relative; align-self: flex-start;
+    display: flex; align-items: center; justify-content: center;
+    min-width: 132px; height: 1.15rem; padding: 0 14px;
+  }
+  .stage-link::before {
+    content: ""; position: absolute; left: 12px; right: 12px; top: 50%;
+    border-top: 1px solid var(--rule);
+  }
+  .stage-link::after {
+    content: ""; position: absolute; right: 12px; top: 50%;
+    width: 5px; height: 5px; margin-top: -3px;
+    border-top: 1px solid var(--rule); border-right: 1px solid var(--rule);
+    transform: rotate(45deg);
+  }
+  .stage-elapsed {
+    position: relative;
+    font-family: var(--mono); font-size: 0.72rem; font-weight: 500;
+    color: var(--ink-2); background: var(--paper); padding: 0 8px;
+  }
+  .hero-meta { display: flex; gap: 34px; margin: 0; flex-wrap: wrap; }
+  .hero-meta dt {
+    font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.13em;
+    text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px;
+  }
+  .hero-meta dd { font-family: var(--mono); font-size: 0.82rem; margin: 0; color: var(--ink); }
+
+  /* -------------------------------------------------------------- rail */
+  /* A real sequence, so it is numbered and arrowed; the counts are live.  */
+  .rail { border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  .rail ol {
+    list-style: none; margin: 0; padding: 0;
+    display: grid; grid-template-columns: repeat(4, 1fr);
+  }
+  .rail li { padding: 26px 30px 26px 0; position: relative; }
+  .rail li + li { padding-left: 30px; border-left: 1px solid var(--rule-2); }
+  .rail li + li::before {
+    content: ""; position: absolute; left: -4px; top: 50%;
+    width: 7px; height: 7px; margin-top: -4px;
+    border-top: 1px solid var(--rule); border-right: 1px solid var(--rule);
+    transform: rotate(45deg); background: var(--paper);
+  }
+  .rail-step {
+    display: block;
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .rail-figure {
+    display: block; font-family: var(--mono); font-weight: 700;
+    font-size: clamp(1.5rem, 3vw, 2.1rem); letter-spacing: -0.03em;
+    line-height: 1.25; margin-top: 10px; font-variant-numeric: tabular-nums;
+  }
+  .rail li:last-child .rail-figure { color: var(--heal); }
+  .rail-note { display: block; font-size: 0.8rem; color: var(--ink-2); margin-top: 2px; max-width: 24ch; }
+
+  /* ----------------------------------------------------------- section */
+  section.band { padding-block: clamp(56px, 8vw, 90px); border-bottom: 1px solid var(--rule-2); }
+  .band-head { display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 34px; }
+  .band-head h2 {
+    font-size: clamp(1.3rem, 2.6vw, 1.7rem); font-weight: 600;
+    letter-spacing: -0.025em; margin: 6px 0 0;
+  }
+  .band-lede { color: var(--ink-2); font-size: 0.92rem; margin: 8px 0 0; max-width: 60ch; }
+  .band-lede code {
+    font-family: var(--mono); font-size: 0.86em; color: var(--ink);
+    background: var(--paper-2); padding: 0.1em 0.34em; border-radius: 4px;
+  }
+  .band-head .aside { margin-left: auto; }
+
+  /* legend for the gauge, stated once */
+  .legend {
+    display: flex; gap: 20px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 0.7rem; color: var(--ink-3);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend i { display: inline-block; width: 22px; height: 9px; border-radius: 2px; flex: none; }
+  .legend .l-floor { width: 2px; height: 13px; background: var(--ink); border-radius: 1px; }
+  .legend .l-short { background: repeating-linear-gradient(135deg, var(--paper-2) 0 3px, var(--break) 3px 4px); }
+  .legend .l-hold { background: var(--hold); }
+
+  /* ------------------------------------------------------------- fleet */
+  /* Wide enough that three never fit: a fourth target pairs off instead of
+     stranding itself on a row of its own. */
+  .fleet { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); }
+  .target {
+    background: var(--panel);
+    border: 1px solid var(--rule-2);
+    border-radius: 10px;
+    padding: 22px 22px 0;
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+  }
+  /* Footers line up across cards of different heights. */
+  .target .gauges { margin-bottom: auto; }
+  .target-head { display: flex; align-items: baseline; gap: 10px; }
+  .target-name {
+    font-family: var(--mono); font-size: 1rem; font-weight: 700;
+    letter-spacing: -0.02em; margin: 0;
+  }
+  .state {
+    margin-left: auto; flex: none;
+    font-family: var(--mono); font-size: 0.64rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  [data-state="healthy"] .state { color: var(--hold); }
+  [data-state="degraded"] .state { color: var(--drift); }
+  [data-state="broken"] .state { color: var(--break); }
+  [data-state="waiting"] .state { color: var(--ink-3); }
+  .target-source { font-size: 0.82rem; color: var(--ink-2); margin: 4px 0 0; }
+  .target-source a { text-decoration-color: var(--rule); text-underline-offset: 2px; }
+  .target-source a:hover { text-decoration-color: var(--heal); color: var(--heal); }
+  .target-verdict { font-family: var(--serif); font-size: 1.02rem; color: var(--ink-2); margin: 14px 0 0; }
+  .recovered-flag {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 12px;
+    font-family: var(--mono); font-size: 0.68rem; color: var(--heal);
+    background: var(--heal-2); border-radius: 999px; padding: 4px 10px;
+  }
+
+  /* collection strip: one bar per stored collection, oldest at the left */
+  .strip { display: flex; align-items: flex-end; gap: 3px; height: 30px; margin: 18px 0 6px; }
+  .strip i {
+    flex: 1 1 0; min-width: 3px; max-width: 11px; height: 100%;
+    background: var(--hold); border-radius: 2px; opacity: 0.8;
+  }
+  .strip i.is-bad { background: var(--break); opacity: 1; }
+  .strip i:last-child { opacity: 1; }
+  .strip-caption { font-family: var(--mono); font-size: 0.66rem; color: var(--ink-3); }
+  .strip-empty { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-3); margin: 18px 0 6px; }
+
+  /* the gauge — the page's signature element */
+  .gauges { margin: 20px 0 0; padding: 16px 0 0; border-top: 1px solid var(--rule-2); }
+  .gauge + .gauge { margin-top: 15px; }
+  .gauge-label { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .gauge-field { font-family: var(--mono); font-size: 0.78rem; font-weight: 500; }
+  .gauge-optional { font-family: var(--mono); font-size: 0.62rem; color: var(--ink-3); letter-spacing: 0.06em; }
+  .gauge-read {
+    margin-left: auto; font-family: var(--mono); font-size: 0.78rem; font-weight: 700;
+    font-variant-numeric: tabular-nums; color: var(--hold);
+  }
+  .gauge[data-ok="false"] .gauge-read { color: var(--break); }
+  .track {
+    position: relative; height: 9px; border-radius: 2px;
+    background: var(--paper-2); overflow: visible;
+  }
+  .track.is-thin { height: 5px; margin-top: 6px; }
+  .track.is-thin .value { background: color-mix(in srgb, var(--hold) 55%, transparent); }
+  .track.is-thin .floor { background: var(--ink-2); }
+  .track .value {
+    position: absolute; inset: 0 auto 0 0; width: var(--v);
+    background: var(--hold); border-radius: 2px;
+    transition: width 900ms cubic-bezier(0.16, 0.84, 0.28, 1);
+  }
+  .js .track .value { width: 0; }
+  .js .is-measured .track .value { width: var(--v); }
+  .gauge[data-ok="false"] .track .value { background: var(--drift); }
+  .gauge[data-vanished="true"] .track .value { background: var(--break); }
+  /* the shortfall: measured value to contract floor, drawn as missing material */
+  .track .short {
+    position: absolute; top: 0; bottom: 0; left: var(--v); width: var(--gap);
+    background: repeating-linear-gradient(135deg, transparent 0 3px, var(--break) 3px 4px);
+    border-radius: 0 2px 2px 0;
+    transition: width 900ms cubic-bezier(0.16, 0.84, 0.28, 1) 120ms;
+  }
+  .js .track .short { width: 0; }
+  .js .is-measured .track .short { width: var(--gap); }
+  /* the contract floor: a hard line the measurement either clears or does not */
+  .track .floor {
+    position: absolute; top: -3px; bottom: -3px; left: var(--t);
+    width: 2px; background: var(--ink); border-radius: 1px;
+  }
+  /* Secondary clauses of the same contract: pattern, distinctness. */
+  .gauge-clause {
+    display: flex; align-items: baseline; gap: 8px; margin: 9px 0 0;
+    font-family: var(--mono); font-size: 0.68rem; color: var(--ink-3);
+  }
+  .gauge-clause code {
+    font-family: var(--mono); color: var(--ink-2);
+    background: var(--paper-2); padding: 1px 5px; border-radius: 3px;
+  }
+  .gauge-clause b { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--hold); }
+  .gauge[data-clause="false"] .gauge-clause b { color: var(--break); }
+
+  .target-foot {
+    margin: 20px -22px 0; padding: 12px 22px;
+    border-top: 1px solid var(--rule-2);
+    display: flex; flex-direction: column; gap: 3px;
+    font-family: var(--mono); font-size: 0.68rem; color: var(--ink-3);
+  }
+  .target-foot .id { word-break: break-all; }
+
+  /* ---------------------------------------------------------- recovery */
+  .log { list-style: none; margin: 0; padding: 0; }
+  .entry { display: grid; grid-template-columns: 13px 200px minmax(0, 1fr); gap: 0 24px; }
+  .entry-rail { position: relative; }
+  .entry-rail::before {
+    content: ""; position: absolute; left: 5px; top: 20px; bottom: -8px;
+    width: 1px; background: var(--rule);
+  }
+  .entry:last-child .entry-rail::before { display: none; }
+  .entry-rail::after {
+    content: ""; position: absolute; left: 0; top: 7px;
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 2px solid var(--ink-3); background: var(--paper);
+  }
+  .entry[data-status="verified"] .entry-rail::after { border-color: var(--hold); box-shadow: 0 0 0 4px color-mix(in srgb, var(--hold) 14%, transparent); }
+  .entry[data-status="failed"] .entry-rail::after { border-color: var(--break); }
+  .entry[data-status="awaiting_approval"] .entry-rail::after,
+  .entry[data-status="proposed"] .entry-rail::after { border-color: var(--drift); }
+  .entry-body { padding-bottom: 36px; min-width: 0; }
+  .entry-head { padding-bottom: 36px; display: flex; flex-direction: column; gap: 7px; align-items: flex-start; }
+  .entry-target { font-family: var(--mono); font-size: 0.92rem; font-weight: 700; }
+  .entry-when { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-3); line-height: 1.5; }
+  .entry-when b { display: block; font-weight: 500; color: var(--ink-2); }
+  .badge {
+    font-family: var(--mono); font-size: 0.62rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor;
+  }
+  [data-status="verified"] .badge { color: var(--hold); }
+  [data-status="failed"] .badge { color: var(--break); }
+  [data-status="awaiting_approval"] .badge, [data-status="proposed"] .badge { color: var(--drift); }
+  [data-status="rejected"] .badge { color: var(--ink-3); }
+  .symptom {
+    font-family: var(--serif); font-size: 1.18rem; line-height: 1.5;
+    color: var(--ink); margin: 0; padding-left: 18px;
+    border-left: 2px solid var(--drift); max-width: 60ch;
+  }
+  .symptom + .symptom { margin-top: 14px; }
+  .symptom.is-fatal { border-left-color: var(--break); }
+  .symptom code {
+    font-family: var(--mono); font-size: 0.76em; color: var(--heal);
+    background: var(--heal-2); padding: 0.1em 0.3em; border-radius: 3px;
+  }
+  .prompt { margin-top: 16px; }
+  .prompt summary {
+    font-family: var(--mono); font-size: 0.72rem; color: var(--ink-2);
+    cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 8px;
+    padding: 4px 0;
+  }
+  .prompt summary::-webkit-details-marker { display: none; }
+  .prompt summary::before { content: "+"; color: var(--ink-3); font-weight: 700; }
+  .prompt[open] summary::before { content: "–"; }
+  .prompt summary:hover { color: var(--ink); }
+  .prompt-body { position: relative; margin-top: 10px; }
+  .prompt pre {
+    font-family: var(--mono); font-size: 0.76rem; line-height: 1.65;
+    background: var(--panel); border: 1px solid var(--rule-2); border-radius: 8px;
+    padding: 16px 18px; margin: 0; white-space: pre-wrap; color: var(--ink-2);
+    overflow-x: auto;
+  }
+  .copy {
+    position: absolute; top: 10px; right: 10px;
+    font: 500 0.66rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase;
+    background: var(--paper); color: var(--ink-2);
+    border: 1px solid var(--rule); border-radius: 5px; padding: 4px 9px; cursor: pointer;
+  }
+  .copy:hover { color: var(--ink); border-color: var(--ink-3); }
+  .outcome { font-family: var(--mono); font-size: 0.76rem; color: var(--ink-2); margin: 14px 0 0; }
+
+  /* -------------------------------------------------------------- feed */
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filters button {
+    font: 500 0.74rem var(--sans);
+    background: transparent; color: var(--ink-2);
+    border: 1px solid var(--rule); border-radius: 999px;
+    padding: 5px 13px; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .filters button span { font-family: var(--mono); font-size: 0.68rem; color: var(--ink-3); margin-left: 5px; }
+  .filters button:hover { color: var(--ink); border-color: var(--ink-3); }
+  .filters button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .filters button[aria-pressed="true"] span { color: color-mix(in srgb, var(--paper) 65%, transparent); }
+
+  .feed { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule-2); }
+  .change {
+    display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 3px 20px;
+    padding: 13px 0; border-bottom: 1px solid var(--rule-2); align-items: baseline;
+  }
+  .change.is-hidden { display: none; }
+  .change-kind {
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .change-kind::before { content: ""; width: 7px; height: 7px; border-radius: 1px; background: currentColor; flex: none; }
+  [data-kind="added"] .change-kind { color: var(--hold); }
+  [data-kind="changed"] .change-kind { color: var(--drift); }
+  [data-kind="removed"] .change-kind { color: var(--break); }
+  .change-title { font-size: 0.98rem; font-weight: 500; letter-spacing: -0.01em; margin: 0; }
+  .change-title a { text-decoration-color: var(--rule); text-underline-offset: 3px; }
+  .change-title a:hover { color: var(--heal); text-decoration-color: var(--heal); }
+  .change-summary { font-size: 0.88rem; color: var(--ink-2); margin: 4px 0 0; max-width: 74ch; }
+  .change-fields { font-family: var(--mono); font-size: 0.7rem; color: var(--ink-3); margin: 5px 0 0; }
+  .change-meta {
+    font-family: var(--mono); font-size: 0.7rem; color: var(--ink-3);
+    grid-column: 3; grid-row: 1; text-align: right; white-space: nowrap;
+  }
+  .change-meta b { display: block; font-weight: 500; color: var(--ink-2); }
+  .feed-more { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-3); margin: 18px 0 0; }
+
+  /* --------------------------------------------------------- contracts */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--rule-2); border-radius: 10px; background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 13px 18px; border-bottom: 1px solid var(--rule-2); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 0.64rem; font-weight: 700;
+    letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-3);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono { font-family: var(--mono); font-size: 0.78rem; white-space: nowrap; }
+  td.dim { color: var(--ink-3); }
+  .terms { display: flex; flex-direction: column; gap: 5px; }
+  .term { font-family: var(--mono); font-size: 0.74rem; color: var(--ink-2); }
+  .term b { color: var(--ink); font-weight: 500; }
+  .term .floor-note { color: var(--ink-3); }
+  .term .pat { background: var(--paper-2); padding: 1px 5px; border-radius: 3px; }
+
+  .empty {
+    font-family: var(--serif); font-size: 1.15rem; color: var(--ink-2);
+    border: 1px dashed var(--rule); border-radius: 10px;
+    padding: 30px 26px; margin: 0; max-width: 60ch;
+  }
+  .empty code { font-family: var(--mono); font-size: 0.8em; color: var(--heal); background: var(--heal-2); padding: 0.1em 0.35em; border-radius: 3px; }
+
+  /* ------------------------------------------------------------ footer */
+  footer.page {
+    padding-block: 40px 64px;
+    font-family: var(--mono); font-size: 0.72rem; color: var(--ink-3);
+  }
+  footer.page .shell { display: flex; gap: 16px 40px; flex-wrap: wrap; align-items: baseline; }
+  footer.page code { color: var(--ink-2); }
+  footer.page .right { margin-left: auto; }
+
+  /* -------------------------------------------------------------- load */
+  /* Gauges render finished by default. Only once the script has announced
+     itself do they start at zero and sweep out to the measured value, so a
+     page with no JavaScript — or one being printed or captured whole — is
+     complete rather than empty. Nothing here can hide content. */
+
+  @media (max-width: 860px) {
+    .rail ol { grid-template-columns: repeat(2, 1fr); }
+    .rail li:nth-child(3) { border-left: none; padding-left: 0; }
+    .rail li:nth-child(3)::before { display: none; }
+    .rail li:nth-child(-n+2) { border-bottom: 1px solid var(--rule-2); }
+  }
+  @media (max-width: 900px) {
+    .entry { grid-template-columns: 13px minmax(0, 1fr); }
+    .entry-head { padding-bottom: 14px; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+    .entry-when b { display: inline; }
+  }
+  @media (max-width: 620px) {
+    .masthead-status, .stamp { display: none; }
+    .masthead .shell { min-height: 56px; }
+    .rail ol { grid-template-columns: 1fr; }
+    .rail li + li { border-left: none; padding-left: 0; }
+    .rail li + li::before { display: none; }
+    .rail li { border-bottom: 1px solid var(--rule-2); padding: 20px 0; }
+    .rail li:last-child { border-bottom: none; }
+    .stages { flex-direction: column; align-items: flex-start; gap: 12px; }
+    .stage-link { flex-direction: row; padding: 0; min-width: 0; margin: 0; }
+    .stage-link::before { display: none; }
+    .stage-elapsed { margin: 0; padding: 0; }
+    .change { grid-template-columns: 1fr; gap: 6px; }
+    .change-meta { grid-column: 1; grid-row: auto; text-align: left; }
+    .change-meta b { display: inline; }
+    .target-foot .id { margin-left: 0; }
+  }
+  /* These two blocks undo the animation-start state, so they have to outrank
+     the `.js` selectors that set it — hence the matching `.js` prefix. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+    .js .track .value { width: var(--v); }
+    .js .track .short { width: var(--gap); }
+  }
+  @media print {
+    .masthead { position: static; }
+    .theme-toggle, .filters, .copy { display: none; }
+    .js .track .value { width: var(--v); }
+    .js .track .short { width: var(--gap); }
+    .prompt-body pre { white-space: pre-wrap; }
+    .target, section.band { break-inside: avoid; }
+  }
+</style>
+<script>
+  // Set the theme before first paint so a reload never flashes the wrong one.
+  (function () {
+    try {
+      var saved = localStorage.getItem("dr-browser-theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    } catch (e) {}
+    // Only now may the stylesheet animate things in from nothing.
+    document.documentElement.classList.add("js");
+  })();
+</script>
+</head>
+<body data-system="{{ system }}">
+<a class="skip" href="#fleet">Skip to target status</a>
+
+<header class="masthead">
+  <div class="shell">
+    <p class="wordmark"><span class="beacon" aria-hidden="true"></span>Dr Browser</p>
+    <p class="masthead-status">
+      {% if broken %}{{ broken|length }} target{{ '' if broken|length == 1 else 's' }} broken
+      {%- elif degraded %}{{ degraded|length }} target{{ '' if degraded|length == 1 else 's' }} drifting
+      {%- else %}all {{ stats.targets }} targets holding{% endif %}
+    </p>
+    <div class="masthead-side">
+      <p class="stamp">built {{ generated_at.strftime('%d %b %Y · %H:%M') }} UTC</p>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-live="polite">Dark</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero shell">
+    <p class="eyebrow">{{ hero.eyebrow }}</p>
+    <blockquote class="statement">{{ hero.lede|symptom }}</blockquote>
+    {% if hero.detail %}
+    <p class="statement-detail">{{ hero.detail|symptom }}</p>
+    {% endif %}
+    {% if hero.heal %}
+    {% set h = hero.heal %}
+    <div class="proof">
+      <ol class="stages">
+        <li class="stage is-done">
+          <span class="stage-name">Detected</span>
+          <time class="stage-time">{{ h.detected_at.strftime('%d %b · %H:%M') }} UTC</time>
+        </li>
+        <li class="stage-link">
+          <span class="stage-elapsed">{{ h.duration_seconds|duration }}</span>
+        </li>
+        <li class="stage {% if h.status.value == 'verified' %}is-done{% elif h.status.value == 'failed' %}is-fail{% else %}is-open{% endif %}">
+          <span class="stage-name">{{ STATUS_LABEL.get(h.status.value, h.status.value) }}</span>
+          <time class="stage-time">
+            {%- if h.resolved_at %}{{ h.resolved_at.strftime('%d %b · %H:%M') }} UTC{% else %}open{% endif -%}
+          </time>
+        </li>
+      </ol>
+      <dl class="hero-meta">
+        <div><dt>Target</dt><dd>{{ h.target }}</dd></div>
+        <div><dt>Collector</dt><dd>{{ h.collector_id }}</dd></div>
+        <div><dt>Repaired by</dt><dd>bdata scraper heal</dd></div>
+      </dl>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="rail" aria-label="Pipeline stages and their running totals">
+    <div class="shell">
+      <ol>
+        <li>
+          <span class="rail-step">1 · Run</span>
+          <b class="rail-figure">{{ stats.collections }}</b>
+          <span class="rail-note">collections stored across {{ stats.targets }} targets</span>
+        </li>
+        <li>
+          <span class="rail-step">2 · Check</span>
+          <b class="rail-figure">{{ stats.contracts }}</b>
+          <span class="rail-note">field contracts measured on {{ "{:,}".format(stats.entries) }} live entries</span>
+        </li>
+        <li>
+          <span class="rail-step">3 · Heal</span>
+          <b class="rail-figure">{{ stats.heals }}</b>
+          <span class="rail-note">symptom{{ '' if stats.heals == 1 else 's' }} written and sent to Scraper Studio</span>
+        </li>
+        <li>
+          <span class="rail-step">4 · Verify</span>
+          <b class="rail-figure">{{ stats.heals_verified }}/{{ stats.heals }}</b>
+          <span class="rail-note">
+            {%- if stats.recovery_seconds %}repairs passed a re-check, {{ stats.recovery_seconds|duration }} to recover
+            {%- else %}repairs proven against the contract that flagged them{% endif -%}
+          </span>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band shell" id="fleet">
+    <div class="band-head">
+      <div>
+        <p class="eyebrow">Targets</p>
+        <h2>What each contract is measuring right now</h2>
+        <p class="band-lede">
+          Every field declares how often it must be populated and what its values should look
+          like. The bar is the last collection; the line is the floor it has to clear.
+        </p>
+      </div>
+      <div class="aside legend" aria-hidden="true">
+        <span><i class="l-hold"></i>measured</span>
+        <span><i class="l-floor"></i>contract floor</span>
+        <span><i class="l-short"></i>shortfall</span>
+      </div>
+    </div>
+
+    <div class="fleet">
+      {% for view in views %}
+      <article class="target" data-state="{{ view.state }}">
+        <div class="target-head">
+          <h3 class="target-name">{{ view.name }}</h3>
+          <span class="state">{{ STATE_LABEL.get(view.state, view.state) }}</span>
+        </div>
+        <p class="target-source"><a href="{{ view.target.url }}" rel="noopener">{{ view.host }}</a></p>
+        <p class="target-verdict">{{ view.verdict }}</p>
+        {% if view.recovered %}
+        <p class="recovered-flag">recovered from a break on its own</p>
+        {% endif %}
+
+        {% if view.history %}
+        {% set peak = view.history|map(attribute='row_count')|max or 1 %}
+        <div class="strip" role="img" aria-label="{{ view.history|length }} stored collections, oldest first">
+          {% for record in view.history %}
+          <i class="{{ '' if record.healthy else 'is-bad' }}"
+             style="height: {{ (46 + 54 * record.row_count / peak)|round|int }}%"
+             title="{{ record.fetched_at.strftime('%d %b %H:%M') }} · {{ record.row_count }} rows · {{ 'passed' if record.healthy else 'failed the contract' }}"></i>
+          {% endfor %}
+        </div>
+        <p class="strip-caption">last {{ view.history|length }} collection{{ '' if view.history|length == 1 else 's' }}, oldest first</p>
+        {% else %}
+        <p class="strip-empty">no collections stored yet</p>
+        {% endif %}
+
+        {% if view.gauges %}
+        <div class="gauges">
+          {% for gauge in view.gauges %}
+          <div class="gauge" data-ok="{{ 'true' if gauge.fill_ok else 'false' }}"
+               data-clause="{{ 'true' if gauge.match_ok and gauge.distinct_ok else 'false' }}"
+               data-vanished="{{ 'true' if gauge.vanished else 'false' }}">
+            <div class="gauge-label">
+              <span class="gauge-field">{{ gauge.field }}</span>
+              {% if gauge.vanished %}<span class="gauge-optional">vanished</span>
+              {% elif not gauge.required %}<span class="gauge-optional">optional</span>{% endif %}
+              <b class="gauge-read">{{ gauge.fill|percent }}</b>
+            </div>
+            <div class="track"
+                 style="--v: {{ (gauge.fill * 100)|round(1) }}%; --t: {{ (gauge.min_fill * 100)|round(1) }}%; --gap: {{ (([gauge.min_fill - gauge.fill, 0]|max) * 100)|round(1) }}%">
+              <span class="value"></span>
+              <span class="short"></span>
+              <span class="floor" title="contract floor {{ gauge.min_fill|percent }}"></span>
+            </div>
+            {% if gauge.pattern %}
+            <p class="gauge-clause">
+              <span>matches <code>{{ gauge.pattern }}</code></span>
+              <b>{{ gauge.match|percent }}</b>
+            </p>
+            <div class="track is-thin"
+                 style="--v: {{ ((gauge.match or 0) * 100)|round(1) }}%; --t: {{ (min_match_rate * 100)|round(1) }}%; --gap: {{ (([min_match_rate - (gauge.match or 0), 0]|max) * 100)|round(1) }}%">
+              <span class="value"></span>
+              <span class="short"></span>
+              <span class="floor"></span>
+            </div>
+            {% endif %}
+            {% if gauge.rival %}
+            <p class="gauge-clause">
+              <span>distinct from <code>{{ gauge.rival }}</code></span>
+              <b>{{ gauge.distinct|percent }}</b>
+            </p>
+            <div class="track is-thin"
+                 style="--v: {{ ((gauge.distinct or 0) * 100)|round(1) }}%; --t: {{ (min_distinct_rate * 100)|round(1) }}%; --gap: {{ (([min_distinct_rate - (gauge.distinct or 0), 0]|max) * 100)|round(1) }}%">
+              <span class="value"></span>
+              <span class="short"></span>
+              <span class="floor"></span>
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="target-foot">
+          <span>{{ view.row_count }} rows</span>
+          <span>{{ view.collected_at.strftime('%d %b %H:%M') if view.collected_at else 'never run' }}</span>
+          <span class="id">{{ view.target.collector_id or 'not provisioned' }}</span>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="band shell" id="recovery">
+    <div class="band-head">
+      <div>
+        <p class="eyebrow">Recovery log</p>
+        <h2>Every break, and what was done about it</h2>
+        <p class="band-lede">
+          The symptom is the pipeline's own description of the failure, and it is the exact
+          text handed to <code>bdata scraper heal</code>. A repair only counts once fresh
+          output passes the contract that flagged it.
+        </p>
+      </div>
+    </div>
+
+    {% if heals %}
+    <ol class="log">
+      {% for heal in heals %}
+      <li class="entry" data-status="{{ heal.status.value }}">
+        <div class="entry-rail" aria-hidden="true"></div>
+        <div class="entry-head">
+          <span class="entry-target">{{ heal.target }}</span>
+          <span class="badge">{{ STATUS_LABEL.get(heal.status.value, heal.status.value) }}</span>
+          <span class="entry-when">
+            <b>{{ heal.detected_at.strftime('%d %b %Y · %H:%M') }} UTC</b>
+            {%- if heal.duration_seconds %} repaired in {{ heal.duration_seconds|duration }}{% endif -%}
+          </span>
+        </div>
+        <div class="entry-body">
+          {% for violation in heal.violations %}
+          <blockquote class="symptom {{ 'is-fatal' if violation.fatal }}">{{ violation.symptom|symptom }}</blockquote>
+          {% endfor %}
+
+          {% if heal.prompt %}
+          <details class="prompt">
+            <summary>Prompt sent to collector {{ heal.collector_id }}</summary>
+            <div class="prompt-body">
+              <pre>{{ heal.prompt }}</pre>
+              <button class="copy" type="button" data-copy>Copy</button>
+            </div>
+          </details>
+          {% endif %}
+
+          {% if heal.notes %}<p class="outcome">{{ heal.notes }}</p>{% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="empty">
+      No break has been recorded. Every collection so far has satisfied its contract, so
+      nothing has been sent to <code>bdata scraper heal</code>.
+    </p>
+    {% endif %}
+  </section>
+
+  <section class="band shell" id="changes">
+    {% set added = feed|selectattr('kind', 'equalto', 'added')|list %}
+    {% set changed = feed|selectattr('kind', 'equalto', 'changed')|list %}
+    {% set removed = feed|selectattr('kind', 'equalto', 'removed')|list %}
+    <div class="band-head">
+      <div>
+        <p class="eyebrow">Change feed</p>
+        <h2>What actually moved on the sources</h2>
+        <p class="band-lede">
+          Compared against the last collection that passed its contract, so a broken scraper
+          can never masquerade as a wave of deleted releases.
+        </p>
+      </div>
+      {% if feed %}
+      <div class="aside filters" role="group" aria-label="Filter the change feed">
+        <button type="button" data-filter="all" aria-pressed="true">All <span>{{ feed|length }}</span></button>
+        {% if added %}<button type="button" data-filter="added" aria-pressed="false">Added <span>{{ added|length }}</span></button>{% endif %}
+        {% if changed %}<button type="button" data-filter="changed" aria-pressed="false">Changed <span>{{ changed|length }}</span></button>{% endif %}
+        {% if removed %}<button type="button" data-filter="removed" aria-pressed="false">Removed <span>{{ removed|length }}</span></button>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    {% if feed %}
+    <ol class="feed" data-feed>
+      {% for item in feed %}
+      <li class="change" data-kind="{{ item.kind }}">
+        <span class="change-kind">{{ item.kind }}</span>
+        <div>
+          <p class="change-title">
+            {% if item.url %}<a href="{{ item.url }}" rel="noopener">{{ item.title }}</a>{% else %}{{ item.title }}{% endif %}
+          </p>
+          {% if item.summary %}<p class="change-summary">{{ item.summary }}</p>{% endif %}
+          {% if item.fields_changed %}<p class="change-fields">fields changed: {{ item.fields_changed|join(', ') }}</p>{% endif %}
+        </div>
+        <p class="change-meta">
+          <b>{{ item.target }}</b>
+          {{ item.date or item.when.strftime('%d %b') }}
+        </p>
+      </li>
+      {% endfor %}
+    </ol>
+    {% if feed_total > feed|length %}
+    <p class="feed-more">showing the {{ feed|length }} most recent of {{ feed_total }} recorded changes</p>
+    {% endif %}
+    {% else %}
+    <p class="empty">
+      No changes recorded yet. The first collection establishes a baseline, so run
+      <code>dr-browser pull</code> a second time to see what moved.
+    </p>
+    {% endif %}
+  </section>
+
+  <section class="band shell" id="contracts" style="border-bottom: none;">
+    <div class="band-head">
+      <div>
+        <p class="eyebrow">Declarations</p>
+        <h2>The contracts, as written</h2>
+        <p class="band-lede">
+          This table is the tripwire in full. It lives in <code>targets.toml</code>; nothing in
+          the detection path is hard-coded.
+        </p>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Target</th>
+            <th scope="col">Source</th>
+            <th scope="col">Collector</th>
+            <th scope="col">Rows</th>
+            <th scope="col">Field contracts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for view in views %}
+          <tr>
+            <td class="mono">{{ view.name }}</td>
+            <td class="dim"><a href="{{ view.target.url }}" rel="noopener">{{ view.host }}</a></td>
+            <td class="mono dim">{{ view.target.collector_id or 'not provisioned' }}</td>
+            <td class="mono dim">&ge; {{ view.target.min_rows }}</td>
+            <td>
+              <div class="terms">
+                {% for field in view.target.fields %}
+                <span class="term">
+                  <b>{{ field.name }}</b>
+                  <span class="floor-note">filled on &ge; {{ (field.min_fill_rate * 100)|round|int }}% of rows</span>
+                  {% if field.pattern %}<span class="pat">{{ field.pattern }}</span>{% endif %}
+                  {% if field.distinct_from %}<span class="floor-note">· distinct from {{ field.distinct_from|join(', ') }}</span>{% endif %}
+                  {% if not field.required %}<span class="floor-note">· optional</span>{% endif %}
+                </span>
+                {% endfor %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer class="page">
+  <div class="shell">
+    <span>Collected through <code>bdata scraper create · run · heal · approve</code> on Bright Data Scraper Studio.</span>
+    <span class="right">Public pages only. No logins, no personal data.</span>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+
+    // --- theme -------------------------------------------------------
+    var toggle = document.querySelector("[data-theme-toggle]");
+    function currentTheme() {
+      return root.getAttribute("data-theme") ||
+        (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    }
+    function paintToggle() {
+      var next = currentTheme() === "dark" ? "light" : "dark";
+      toggle.textContent = next === "dark" ? "Dark" : "Light";
+      toggle.setAttribute("aria-label", "Switch to " + next + " theme");
+    }
+    if (toggle) {
+      paintToggle();
+      toggle.addEventListener("click", function () {
+        var next = currentTheme() === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        try { localStorage.setItem("dr-browser-theme", next); } catch (e) {}
+        paintToggle();
+      });
+    }
+
+    // --- gauges sweep out to their measured values, one card after another.
+    // Deliberately on load rather than on scroll: a bar that only fills when
+    // you reach it is a bar that stays empty when the page is printed.
+    var cards = Array.prototype.slice.call(document.querySelectorAll(".target"));
+    cards.forEach(function (card, index) {
+      setTimeout(function () { card.classList.add("is-measured"); }, 80 + index * 90);
+    });
+
+    // --- change feed filter -----------------------------------------
+    var buttons = Array.prototype.slice.call(document.querySelectorAll("[data-filter]"));
+    var changes = Array.prototype.slice.call(document.querySelectorAll(".change"));
+    buttons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        var wanted = button.getAttribute("data-filter");
+        buttons.forEach(function (other) {
+          other.setAttribute("aria-pressed", String(other === button));
+        });
+        changes.forEach(function (change) {
+          var show = wanted === "all" || change.getAttribute("data-kind") === wanted;
+          change.classList.toggle("is-hidden", !show);
+        });
+      });
+    });
+
+    // --- copy a heal prompt ------------------------------------------
+    document.querySelectorAll("[data-copy]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var pre = button.parentNode.querySelector("pre");
+        if (!pre || !navigator.clipboard) return;
+        navigator.clipboard.writeText(pre.textContent).then(function () {
+          button.textContent = "Copied";
+          setTimeout(function () { button.textContent = "Copy"; }, 1600);
+        });
+      });
+    });
+  })();
+</script>
+</body>
+</html>
