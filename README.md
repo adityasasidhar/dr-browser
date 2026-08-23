@@ -16,7 +16,9 @@ and only trusts a repair after fresh output passes its original contract.
 
 *Built for the [Scrape-Verse Hackathon](https://wemakedevs.org).*
 
-[▶ Watch the 58-second product demo](demo/dr-browser-demo.mp4)
+[![Watch the 58-second Dr Browser product demo](demo/dr-browser-demo.gif)](demo/dr-browser-demo.mp4)
+
+*Click the demo above to open the full-resolution video with sound.*
 
 </div>
 
@@ -49,8 +51,7 @@ unverified repair.
 
 After pushing to GitHub and enabling Pages for the repository, the included
 scheduled workflow publishes the live dashboard at the repository's GitHub
-Pages URL. Add the submitted demo-video URL here once it is recorded; this
-repository deliberately does not claim a video that has not been published.
+Pages URL.
 
 The dashboard opens with the symptom the pipeline wrote about itself and the
 recovery that followed, then shows, per target: a bar per stored collection,
