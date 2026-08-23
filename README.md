@@ -16,6 +16,8 @@ and only trusts a repair after fresh output passes its original contract.
 
 *Built for the [Scrape-Verse Hackathon](https://wemakedevs.org).*
 
+[▶ Watch the 58-second product demo](demo/dr-browser-demo.mp4)
+
 </div>
 
 ---

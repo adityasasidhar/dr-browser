@@ -12,6 +12,7 @@ build/
 # Generated dashboard — rebuilt by CI on every collection.
 site/
 
+
 # Local scratch stores. The real collection history (data/scrapverse.db) is
 # committed on purpose: it is the pipeline's state between CI runs.
 data/demo.db
